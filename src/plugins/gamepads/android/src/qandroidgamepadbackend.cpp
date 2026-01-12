@@ -76,19 +76,27 @@ namespace {
     const char keyEventClass[] = "android/view/KeyEvent";
     inline int keyField(const char *field)
     {
-        return QJNIObjectPrivate::getStaticField<jint>(keyEventClass, field);
+        return QJniObject::getStaticField<jint>(keyEventClass, field);
     }
 
     const char motionEventClass[] = "android/view/MotionEvent";
     inline int motionField(const char *field)
     {
-        return QJNIObjectPrivate::getStaticField<jint>(motionEventClass, field);
+        return QJniObject::getStaticField<jint>(motionEventClass, field);
     }
 
     const char inputDeviceClass[] = "android/view/InputDevice";
     inline int inputDeviceField(const char *field)
     {
-        return QJNIObjectPrivate::getStaticField<jint>(inputDeviceClass, field);
+        return QJniObject::getStaticField<jint>(inputDeviceClass, field);
+    }
+
+    inline QJniObject copyJObject(jobject obj)
+    {
+        // The incoming jobject is typically a local ref we don't own. Create our own local ref
+        // and let QJniObject take ownership of it.
+        QJniEnvironment env;
+        return QJniObject::fromLocalRef(env->NewLocalRef(obj));
     }
 
 
@@ -200,12 +208,12 @@ namespace {
 
     const char qtGamePadClassName[] = "org/qtproject/qt/android/gamepad/QtGamepad";
 
-    inline void setAxisInfo(QJNIObjectPrivate &event, int axis, QAndroidGamepadBackend::Mapping::AndroidAxisInfo &info)
+    inline void setAxisInfo(QJniObject &event, int axis, QAndroidGamepadBackend::Mapping::AndroidAxisInfo &info)
     {
-        QJNIObjectPrivate device(event.callObjectMethod("getDevice", "()Landroid/view/InputDevice;"));
+        QJniObject device(event.callObjectMethod("getDevice", "()Landroid/view/InputDevice;"));
         if (device.isValid()) {
             const int source = event.callMethod<jint>("getSource", "()I");
-            QJNIObjectPrivate motionRange = device.callObjectMethod("getMotionRange","(II)Landroid/view/InputDevice$MotionRange;", axis, source);
+            QJniObject motionRange = device.callObjectMethod("getMotionRange","(II)Landroid/view/InputDevice$MotionRange;", axis, source);
             if (motionRange.isValid()) {
                 info.flatArea = motionRange.callMethod<jfloat>("getFlat", "()F");
                 info.minValue = motionRange.callMethod<jfloat>("getMin", "()F");
@@ -256,7 +264,7 @@ void QAndroidGamepadBackend::addDevice(int deviceId)
         return;
 
     QMutexLocker lock(&m_mutex);
-    QJNIObjectPrivate inputDevice = QJNIObjectPrivate::callStaticObjectMethod(inputDeviceClass, "getDevice", "(I)Landroid/view/InputDevice;", deviceId);
+    QJniObject inputDevice = QJniObject::callStaticObjectMethod(inputDeviceClass, "getDevice", "(I)Landroid/view/InputDevice;", deviceId);
     int sources = inputDevice.callMethod<jint>("getSources", "()I");
     bool acceptable = false;
     for (int source : g_defaultMapping()->acceptedSources) {
@@ -375,7 +383,7 @@ void QAndroidGamepadBackend::resetConfiguration(int deviceId)
 
 bool QAndroidGamepadBackend::handleKeyEvent(jobject event)
 {
-    QJNIObjectPrivate ev(event);
+    QJniObject ev = copyJObject(event);
     QMutexLocker lock(&m_mutex);
     const int deviceId = ev.callMethod<jint>("getDeviceId", "()I");
     const auto deviceIt = m_devices.find(deviceId);
@@ -442,7 +450,7 @@ bool QAndroidGamepadBackend::handleGenericMotionEvent(jobject event)
     // GenericMotionEvent was introduced in API-12
     Q_ASSERT(QtAndroidPrivate::androidSdkVersion() >= 12);
 
-    QJNIObjectPrivate ev(event);
+    QJniObject ev = copyJObject(event);
     QMutexLocker lock(&m_mutex);
     const int deviceId = ev.callMethod<jint>("getDeviceId", "()I");
     const auto deviceIt = m_devices.find(deviceId);
@@ -566,14 +574,15 @@ bool QAndroidGamepadBackend::start()
         QMutexLocker lock(&m_mutex);
         if (QtAndroidPrivate::androidSdkVersion() >= 16) {
             if (!m_qtGamepad.isValid())
-                m_qtGamepad = QJNIObjectPrivate(qtGamePadClassName, "(Landroid/app/Activity;)V", QtAndroidPrivate::activity());
+                // Use the typed constructor to avoid passing non-POD types through varargs.
+                m_qtGamepad = QJniObject(qtGamePadClassName, QtAndroidPrivate::activity());
             m_qtGamepad.callMethod<void>("register", "(J)V", jlong(this));
         }
     }
 
-    QJNIObjectPrivate ids = QJNIObjectPrivate::callStaticObjectMethod(inputDeviceClass, "getDeviceIds", "()[I");
-    jintArray jarr = jintArray(ids.object());
-    QJNIEnvironmentPrivate env;
+    QJniObject ids = QJniObject::callStaticObjectMethod(inputDeviceClass, "getDeviceIds", "()[I");
+    jintArray jarr = ids.object<jintArray>();
+    QJniEnvironment env;
     size_t sz = env->GetArrayLength(jarr);
     jint *buff = env->GetIntArrayElements(jarr, nullptr);
     for (size_t i = 0; i < sz; ++i)

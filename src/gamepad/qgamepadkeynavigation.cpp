@@ -138,10 +138,11 @@ QGamepadKeyNavigation::QGamepadKeyNavigation(QObject *parent)
     d->gamepadManger = QGamepadManager::instance();
 
     // Default keymap
-    d->keyMapping.insert(QGamepadManager::ButtonUp, Qt::Key_Up);
-    d->keyMapping.insert(QGamepadManager::ButtonDown, Qt::Key_Down);
-    d->keyMapping.insert(QGamepadManager::ButtonLeft, Qt::Key_Left);
-    d->keyMapping.insert(QGamepadManager::ButtonRight, Qt::Key_Right);
+    /* defined in QML and used Amnezia basic navigation*/
+    /*d_ptr->keyMapping.insert(QGamepadManager::ButtonUp, Qt::Key_Up);
+    d_ptr->keyMapping.insert(QGamepadManager::ButtonDown, Qt::Key_Down);
+    d_ptr->keyMapping.insert(QGamepadManager::ButtonLeft, Qt::Key_Left);
+    d_ptr->keyMapping.insert(QGamepadManager::ButtonRight, Qt::Key_Right);*/
     d->keyMapping.insert(QGamepadManager::ButtonA, Qt::Key_Return);
     d->keyMapping.insert(QGamepadManager::ButtonB, Qt::Key_Back);
     d->keyMapping.insert(QGamepadManager::ButtonX, Qt::Key_Back);
