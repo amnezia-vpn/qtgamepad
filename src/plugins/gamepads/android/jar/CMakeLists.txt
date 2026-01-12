@@ -9,7 +9,7 @@
 # android.jar from the local Android SDK installation.
 #
 if(COMMAND qt_get_android_sdk_jar_for_api)
-    qt_get_android_sdk_jar_for_api("android-16" android_sdk)
+qt_get_android_sdk_jar_for_api("android-16" android_sdk)
 else()
     # Try to locate the Android SDK root.
     set(_qtgamepad_android_sdk_root "")

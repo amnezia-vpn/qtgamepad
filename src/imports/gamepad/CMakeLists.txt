@@ -19,10 +19,10 @@ qt_add_qml_module(GamepadLegacyQuickPrivate
 
 # qt_add_qml_module() does not accept PUBLIC_LIBRARIES/LIBRARIES. Link explicitly.
 target_link_libraries(GamepadLegacyQuickPrivate PRIVATE
-    Qt::Core
-    Qt::Gui
-    Qt::Qml
-    Qt::Quick
+        Qt::Core
+        Qt::Gui
+        Qt::Qml
+        Qt::Quick
     Qt::GamepadLegacy
 )
 

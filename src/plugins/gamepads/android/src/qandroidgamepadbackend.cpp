@@ -36,6 +36,7 @@
 #include "qandroidgamepadbackend_p.h"
 
 #include <QtCore/QCoreApplication>
+#include <QtCore/QDebug>
 #include <QtCore/QEvent>
 #include <QtCore/QPair>
 #include <QtCore/QThread>
@@ -103,6 +104,12 @@ namespace {
     struct DefaultMapping : public QAndroidGamepadBackend::Mapping {
         DefaultMapping()
         {
+            QJniEnvironment env; // Ensure JNI is attached
+            if (!env.javaVM()) {
+                qCritical() << "DefaultMapping: No JavaVM available!";
+                return;
+            }
+            
             buttonsMap[keyField("KEYCODE_BUTTON_A")] = QGamepadManager::ButtonA;
             buttonsMap[keyField("KEYCODE_BUTTON_B")] = QGamepadManager::ButtonB;
             buttonsMap[keyField("KEYCODE_BUTTON_X")] = QGamepadManager::ButtonX;
@@ -181,6 +188,8 @@ namespace {
         int ACTION_DOWN, ACTION_MULTIPLE, ACTION_UP, FLAG_LONG_PRESS;
     };
 
+     // These JNI callbacks were used by the QtGamepad Java helper, which we don't use anymore
+    /*
     void onInputDeviceAdded(JNIEnv *, jclass, jlong qtNativePtr, int deviceId)
     {
         if (!qtNativePtr)
@@ -199,14 +208,17 @@ namespace {
             return;
         reinterpret_cast<QAndroidGamepadBackend*>(qtNativePtr)->updateDevice(deviceId);
     }
+    */
 
+    // QtGamepad Java helper is not used - we have direct JNI bridge from AmneziaActivity
+    // const char qtGamePadClassName[] = "org/qtproject/qt/android/gamepad/QtGamepad";
+    /*
     static JNINativeMethod methods[] = {
         {"onInputDeviceAdded", "(JI)V", (void *)onInputDeviceAdded},
         {"onInputDeviceRemoved", "(JI)V", (void *)onInputDeviceRemoved},
         {"onInputDeviceChanged", "(JI)V", (void *)onInputDeviceChanged}
     };
-
-    const char qtGamePadClassName[] = "org/qtproject/qt/android/gamepad/QtGamepad";
+    */
 
     inline void setAxisInfo(QJniObject &event, int axis, QAndroidGamepadBackend::Mapping::AndroidAxisInfo &info)
     {
@@ -248,12 +260,35 @@ QVariantMap QAndroidGamepadBackend::Mapping::AndroidAxisInfo::dataToSave() const
 QAndroidGamepadBackend::QAndroidGamepadBackend(QObject *parent)
     : QGamepadBackend(parent)
 {
+    // Force initialization of default mapping on Qt thread (to avoid JNI crashes when called from UI thread)
+    // Ensure JNI environment is properly attached to this thread
+    QJniEnvironment env;
+    if (!env.javaVM()) {
+        qWarning() << "QAndroidGamepadBackend: Failed to get JavaVM!";
+    }
+    
+    // This calls JNI methods to get Android constants, must have valid JNI env
+    g_defaultMapping();
+    
+    extern QAndroidGamepadBackend *g_gamepadBackend; // Defined after QT_END_NAMESPACE
+    g_gamepadBackend = this;
+    
+    // Pre-create virtual device 0 for TV remote (to avoid JNI issues when created from different thread)
+    m_devices.insert(0, *g_defaultMapping());
+    m_devices[0].productId = 0; // Virtual device
+    m_devices[0].needsConfigure = false;
+    
+    // Note: gamepadAdded(0) will be emitted in start() after connections are established
+    
     QtAndroidPrivate::registerGenericMotionEventListener(this);
     QtAndroidPrivate::registerKeyEventListener(this);
 }
 
 QAndroidGamepadBackend::~QAndroidGamepadBackend()
 {
+    extern QAndroidGamepadBackend *g_gamepadBackend;
+    if (g_gamepadBackend == this)
+        g_gamepadBackend = nullptr;
     QtAndroidPrivate::unregisterGenericMotionEventListener(this);
     QtAndroidPrivate::unregisterKeyEventListener(this);
 }
@@ -572,13 +607,18 @@ bool QAndroidGamepadBackend::start()
 {
     {
         QMutexLocker lock(&m_mutex);
+        // Skip QtGamepad Java helper - we use direct JNI bridge from AmneziaActivity instead
+        /*
         if (QtAndroidPrivate::androidSdkVersion() >= 16) {
             if (!m_qtGamepad.isValid())
-                // Use the typed constructor to avoid passing non-POD types through varargs.
                 m_qtGamepad = QJniObject(qtGamePadClassName, QtAndroidPrivate::activity());
             m_qtGamepad.callMethod<void>("register", "(J)V", jlong(this));
         }
+        */
     }
+
+    // Emit gamepadAdded(0) for virtual TV remote device (pre-created in constructor)
+    emit gamepadAdded(0);
 
     QJniObject ids = QJniObject::callStaticObjectMethod(inputDeviceClass, "getDeviceIds", "()[I");
     jintArray jarr = ids.object<jintArray>();
@@ -588,14 +628,18 @@ bool QAndroidGamepadBackend::start()
     for (size_t i = 0; i < sz; ++i)
         addDevice(buff[i]);
     env->ReleaseIntArrayElements(jarr, buff, 0);
+    
     return true;
 }
 
 void QAndroidGamepadBackend::stop()
 {
     QMutexLocker lock(&m_mutex);
+    // Skip QtGamepad Java helper unregister - we don't use it
+    /*
     if (QtAndroidPrivate::androidSdkVersion() >= 16 && m_qtGamepad.isValid())
         m_qtGamepad.callMethod<void>("unregister", "()V");
+    */
 }
 
 void QAndroidGamepadBackend::saveData(const QAndroidGamepadBackend::Mapping &deviceInfo)
@@ -616,29 +660,165 @@ void QAndroidGamepadBackend::saveData(const QAndroidGamepadBackend::Mapping &dev
     saveSettings(deviceInfo.productId, settings);
 }
 
+void QAndroidGamepadBackend::handleKeyEventDirect(int deviceId, int keyCode, bool pressed)
+{
+    // For TV remotes with deviceId < 0, map to virtual device 0
+    const int virtualDeviceId = (deviceId < 0) ? 0 : deviceId;
+    const bool isTVRemote = (deviceId < 0);
+
+    QMutexLocker lock(&m_mutex);
+    
+    // Device 0 should already exist (pre-created in constructor for TV remote)
+    // For real gamepads, add them dynamically
+    if (!m_devices.contains(virtualDeviceId)) {
+        if (isTVRemote) {
+            qWarning() << "QAndroidGamepadBackend: Virtual device 0 not found (should be pre-created)!";
+            return;
+        } else {
+            // Real gamepad - add using standard method
+            lock.unlock();
+            addDevice(virtualDeviceId);
+            lock.relock();
+        }
+    }
+    
+    auto it = m_devices.find(virtualDeviceId);
+    if (it == m_devices.end()) {
+        return;
+    }
+        
+    // Map Android keyCode to gamepad button
+    auto buttonIt = it->buttonsMap.find(keyCode);
+    if (buttonIt == it->buttonsMap.end()) {
+        return;
+    }
+        
+    QGamepadManager::GamepadButton button = buttonIt.value();
+    lock.unlock();
+    
+    // Emit signal (we're already on Qt thread, so emit directly)
+    if (pressed) {
+        emit gamepadButtonPressed(virtualDeviceId, button, 1.0);
+    } else {
+        emit gamepadButtonReleased(virtualDeviceId, button);
+    }
+}
+
+void QAndroidGamepadBackend::handleAxisEventDirect(int deviceId, int axis, float value)
+{
+    const int virtualDeviceId = (deviceId < 0) ? 0 : deviceId;
+    const bool isTVRemote = (deviceId < 0);
+
+    QMutexLocker lock(&m_mutex);
+    
+    if (!m_devices.contains(virtualDeviceId)) {
+        if (isTVRemote) {
+            m_devices.insert(virtualDeviceId, *g_defaultMapping());
+            m_devices[virtualDeviceId].productId = 0;
+            m_devices[virtualDeviceId].needsConfigure = false;
+            lock.unlock();
+            FunctionEvent::runOnQtThread(this, [this, virtualDeviceId]{
+                emit gamepadAdded(virtualDeviceId);
+            });
+            lock.relock();
+        } else {
+            lock.unlock();
+            addDevice(virtualDeviceId);
+            lock.relock();
+        }
+    }
+    
+    auto it = m_devices.find(virtualDeviceId);
+    if (it == m_devices.end())
+        return;
+        
+    auto axisIt = it->axisMap.find(axis);
+    if (axisIt == it->axisMap.end())
+        return;
+        
+    auto &axisInfo = axisIt.value();
+    if (axisInfo.setValue(value)) {
+        lock.unlock();
+        emit gamepadAxisMoved(virtualDeviceId, axisInfo.gamepadAxis, axisInfo.lastValue);
+    }
+}
+
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void */*reserved*/)
 {
+    Q_UNUSED(vm)
+    // Skip QtGamepad Java helper registration - we use direct JNI bridge from AmneziaActivity instead
+    /*
     static bool initialized = false;
     if (initialized)
         return JNI_VERSION_1_6;
     initialized = true;
 
     JNIEnv* env;
-    // get the JNIEnv pointer.
     if (vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) != JNI_OK)
         return JNI_ERR;
 
-    // search for Java class which declares the native methods
     jclass javaClass = env->FindClass("org/qtproject/qt/android/gamepad/QtGamepad");
     if (!javaClass)
         return JNI_ERR;
 
-    // register our native methods
     if (env->RegisterNatives(javaClass, methods,
                              sizeof(methods) / sizeof(methods[0])) < 0) {
         return JNI_ERR;
     }
+    */
     return JNI_VERSION_1_6;
 }
 
 QT_END_NAMESPACE
+
+// JNI bridge for AmneziaActivity to send gamepad events directly (especially for TV remotes with deviceId < 0)
+// Global pointer to backend for JNI callbacks (no 'static' - must be accessible via 'extern' from within Qt namespace)
+QT_USE_NAMESPACE
+QAndroidGamepadBackend *g_gamepadBackend = nullptr;
+
+// Factory function for creating Android backend when statically linked into GamepadLegacy
+// This is a C++ function (not extern "C") so it can be called from qgamepadmanager.cpp
+QGamepadBackend* createAndroidGamepadBackend()
+{
+    // Use local static to ensure singleton across all calls
+    static QAndroidGamepadBackend* s_singletonBackend = nullptr;
+    
+    // Return existing singleton if it was already created
+    if (s_singletonBackend) {
+        return s_singletonBackend;
+    }
+    
+    s_singletonBackend = new QAndroidGamepadBackend();
+    return s_singletonBackend;
+}
+
+extern "C" {
+
+JNIEXPORT void JNICALL Java_org_amnezia_vpn_AmneziaActivity_nativeGamepadKeyEvent(
+    JNIEnv *env, jobject obj, jint deviceId, jint keyCode, jboolean pressed)
+{
+    Q_UNUSED(env)
+    Q_UNUSED(obj)
+    if (g_gamepadBackend) {
+        // Use Qt::QueuedConnection with explicit slot name
+        QMetaObject::invokeMethod(g_gamepadBackend, "handleKeyEventDirect",
+                                  Qt::QueuedConnection,
+                                  Q_ARG(int, deviceId),
+                                  Q_ARG(int, keyCode),
+                                  Q_ARG(bool, pressed));
+    }
+}
+
+JNIEXPORT void JNICALL Java_org_amnezia_vpn_AmneziaActivity_nativeGamepadAxisEvent(
+    JNIEnv *env, jobject obj, jint deviceId, jint axis, jfloat value)
+{
+    Q_UNUSED(env)
+    Q_UNUSED(obj)
+    if (g_gamepadBackend) {
+        QMetaObject::invokeMethod(g_gamepadBackend, [=]() {
+            g_gamepadBackend->handleAxisEventDirect(deviceId, axis, value);
+        }, Qt::QueuedConnection);
+    }
+}
+
+} // extern "C"

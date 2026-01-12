@@ -127,6 +127,18 @@ void QGamepadManagerPrivate::loadBackend()
         }
     }
 
+#ifdef Q_OS_ANDROID
+    // For Android, we compile the backend directly into GamepadLegacy (not as a plugin)
+    // Create it manually here
+    if (!gamepadBackend) {
+        qCDebug(gp) << "Creating Android gamepad backend directly (statically linked)";
+        // Android backend is compiled into the same library
+        // Forward declare and use the external factory function
+        extern QGamepadBackend* createAndroidGamepadBackend();
+        gamepadBackend = createAndroidGamepadBackend();
+    }
+#endif
+
     if (!gamepadBackend) {
         // Use dummy backend
         gamepadBackend = new QGamepadBackend();

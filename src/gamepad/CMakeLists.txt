@@ -26,6 +26,18 @@ qt_internal_add_module(GamepadLegacy
         Qt::CorePrivate
 )
 
+# For Android, compile the backend directly into the module (not as separate plugin)
+# so JNI functions are in the main app .so without Qt symbol versioning.
+if(ANDROID)
+    target_sources(GamepadLegacy PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../plugins/gamepads/android/src/qandroidgamepadbackend.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../plugins/gamepads/android/src/qandroidgamepadbackend_p.h
+    )
+    target_include_directories(GamepadLegacy PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../plugins/gamepads/android/src
+    )
+endif()
+
 # When building this module as a vendored subproject, Qt's header syncing (syncqt)
 # infrastructure isn't available, but some sources include headers via the
 # installed-style prefix (e.g. <QtGamepadLegacy/qgamepad.h>).
@@ -91,9 +103,10 @@ if(ANDROID)
     set_property(TARGET GamepadLegacy APPEND PROPERTY QT_ANDROID_BUNDLED_JAR_DEPENDENCIES
         jar/QtAndroidGamepad.jar
     )
-    set_property(TARGET GamepadLegacy APPEND PROPERTY QT_ANDROID_LIB_DEPENDENCIES
-        plugins/legacygamepads/libplugins_gamepads_androidgamepad.so
-    )
+    # Android backend is now compiled directly into GamepadLegacy, no separate plugin
+    # set_property(TARGET GamepadLegacy APPEND PROPERTY QT_ANDROID_LIB_DEPENDENCIES
+    #     plugins/legacygamepads/libplugins_gamepads_androidgamepad.so
+    # )
 endif()
 
 #### Keys ignored in scope 12:.:.:gamepad.pro:<TRUE>:

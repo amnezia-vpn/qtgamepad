@@ -1,23 +1,13 @@
 # Generated from src.pro.
 
 #####################################################################
-## QAndroidGamepadBackendPlugin Plugin:
+## QAndroidGamepadBackend is now compiled directly into GamepadLegacy
+## (see src/gamepad/CMakeLists.txt) to avoid Qt symbol versioning
+## issues with JNI functions in MODULE plugins.
 #####################################################################
 
-qt_internal_add_plugin(QAndroidGamepadBackendPlugin
-    OUTPUT_NAME androidgamepad
-    PLUGIN_TYPE legacygamepads
-    SOURCES
-        main.cpp
-        qandroidgamepadbackend.cpp qandroidgamepadbackend_p.h
-        android.json
-    LIBRARIES
-        Qt::Core
-        Qt::CorePrivate
-        Qt::GamepadLegacy
-        Qt::GamepadLegacyPrivate
-        Qt::Gui
-)
+# This CMakeLists.txt is kept for compatibility but doesn't build anything.
+
 
 #### Keys ignored in scope 17:.:.:src.pro:<TRUE>:
 # DISTFILES = "android.json"

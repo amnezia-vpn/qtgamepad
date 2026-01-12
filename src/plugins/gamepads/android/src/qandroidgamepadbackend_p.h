@@ -77,6 +77,12 @@ public:
     // GenericMotionEventListener interface
     bool handleGenericMotionEvent(jobject event) override;
 
+public slots:
+    // Helper methods for JNI bridge (direct key/axis events from AmneziaActivity)
+    // These are slots so they can be invoked via QMetaObject::invokeMethod by name
+    void handleKeyEventDirect(int deviceId, int keyCode, bool pressed);
+    void handleAxisEventDirect(int deviceId, int axis, float value);
+
 protected:
     bool start() override;
     void stop() override;
