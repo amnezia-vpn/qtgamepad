@@ -4,27 +4,57 @@
 ## Gamepad Module:
 #####################################################################
 
-qt_internal_add_module(GamepadLegacy
-    NO_GENERATE_METATYPES
-    PLUGIN_TYPES legacygamepads
-    SOURCES
-        qgamepad.cpp qgamepad.h
-        qgamepadbackend.cpp qgamepadbackend_p.h
-        qgamepadbackendfactory.cpp qgamepadbackendfactory_p.h
-        qgamepadbackendplugin.cpp qgamepadbackendplugin_p.h
-        qgamepadkeynavigation.cpp qgamepadkeynavigation.h
-        qgamepadmanager.cpp qgamepadmanager.h
-        qtgamepadglobal.h
-    DEFINES
-        QT_BUILD_GAMEPAD_LIB
-    LIBRARIES
-        Qt::CorePrivate
-    PUBLIC_LIBRARIES
-        Qt::Core
-        Qt::Gui
-    PRIVATE_MODULE_INTERFACE
-        Qt::CorePrivate
+add_library(GamepadLegacy
+    qgamepad.cpp qgamepad.h
+    qgamepadbackend.cpp qgamepadbackend_p.h
+    qgamepadbackendfactory.cpp qgamepadbackendfactory_p.h
+    qgamepadbackendplugin.cpp qgamepadbackendplugin_p.h
+    qgamepadkeynavigation.cpp qgamepadkeynavigation.h
+    qgamepadmanager.cpp qgamepadmanager.h
+    qtgamepadglobal.h
 )
+
+# Set module version for Qt module discovery
+set_target_properties(GamepadLegacy PROPERTIES
+    OUTPUT_NAME GamepadLegacy
+    VERSION ${PROJECT_VERSION}
+    SOVERSION ${PROJECT_VERSION_MAJOR}
+)
+
+target_compile_definitions(GamepadLegacy PRIVATE
+    QT_BUILD_GAMEPAD_LIB
+    QT_BUILDING_QT
+    QT_NO_CAST_TO_ASCII
+)
+
+target_link_libraries(GamepadLegacy
+    PRIVATE Qt::CorePrivate
+    PUBLIC Qt::Core Qt::Gui
+)
+
+# Create a Private target alias for compatibility
+if(NOT TARGET GamepadLegacyPrivate)
+    add_library(GamepadLegacyPrivate INTERFACE)
+    target_link_libraries(GamepadLegacyPrivate INTERFACE GamepadLegacy Qt::CorePrivate)
+endif()
+
+# Create both Qt:: and Qt6:: namespace aliases immediately after target creation
+# so they are available for subdirectories (imports, plugins)
+foreach(_qtgamepad_target IN ITEMS GamepadLegacy GamepadLegacyPrivate)
+    # Create Qt:: alias
+    if(NOT TARGET "Qt::${_qtgamepad_target}")
+        if(TARGET "${_qtgamepad_target}")
+            add_library("Qt::${_qtgamepad_target}" ALIAS "${_qtgamepad_target}")
+        endif()
+    endif()
+    
+    # Create Qt6:: alias
+    if(NOT TARGET "Qt6::${_qtgamepad_target}")
+        if(TARGET "${_qtgamepad_target}")
+            add_library("Qt6::${_qtgamepad_target}" ALIAS "${_qtgamepad_target}")
+        endif()
+    endif()
+endforeach()
 
 # For Android, compile the backend directly into the module (not as separate plugin)
 # so JNI functions are in the main app .so without Qt symbol versioning.
@@ -45,8 +75,11 @@ endif()
 set(_qtgamepad_include_root "${CMAKE_CURRENT_BINARY_DIR}/include")
 set(_qtgamepad_include_dir "${_qtgamepad_include_root}/QtGamepadLegacy")
 file(MAKE_DIRECTORY "${_qtgamepad_include_dir}")
+file(MAKE_DIRECTORY "${_qtgamepad_include_dir}/private")
 set(QTGAMEPADLEGACY_INCLUDE_ROOT "${_qtgamepad_include_root}" CACHE INTERNAL
     "Build-time include root that provides QtGamepadLegacy/<...> headers for vendored qtgamepad")
+
+# Copy public headers
 foreach(_hdr IN ITEMS
     qgamepad.h
     qgamepadkeynavigation.h
@@ -55,6 +88,15 @@ foreach(_hdr IN ITEMS
 )
     configure_file("${CMAKE_CURRENT_SOURCE_DIR}/${_hdr}"
                    "${_qtgamepad_include_dir}/${_hdr}"
+                   COPYONLY)
+endforeach()
+
+# Copy private headers for Android backend
+foreach(_hdr IN ITEMS
+    qgamepadbackend_p.h
+)
+    configure_file("${CMAKE_CURRENT_SOURCE_DIR}/${_hdr}"
+                   "${_qtgamepad_include_dir}/private/${_hdr}"
                    COPYONLY)
 endforeach()
 
@@ -78,27 +120,6 @@ target_include_directories(GamepadLegacy
         "$<BUILD_INTERFACE:${_qtgamepad_include_root}>"
 )
 
-# When building this legacy module as a subproject, Qt's internal plugin helpers
-# expect the module target to exist in the export namespace (e.g. Qt6::GamepadLegacy).
-# Depending on how the repo is embedded, the module might be available as
-# GamepadLegacy and/or Qt::GamepadLegacy. Create alias targets to satisfy
-# QtPluginHelpers' lookup.
-set(_qtgamepad_export_ns "${QT_CMAKE_EXPORT_NAMESPACE}")
-if(_qtgamepad_export_ns STREQUAL "")
-    # Qt6's default export namespace.
-    set(_qtgamepad_export_ns "Qt6")
-endif()
-
-foreach(_qtgamepad_target IN ITEMS GamepadLegacy GamepadLegacyPrivate)
-    if(NOT TARGET "${_qtgamepad_export_ns}::${_qtgamepad_target}")
-        if(TARGET "Qt::${_qtgamepad_target}")
-            add_library("${_qtgamepad_export_ns}::${_qtgamepad_target}" ALIAS "Qt::${_qtgamepad_target}")
-        elseif(TARGET "${_qtgamepad_target}")
-            add_library("${_qtgamepad_export_ns}::${_qtgamepad_target}" ALIAS "${_qtgamepad_target}")
-        endif()
-    endif()
-endforeach()
-
 if(ANDROID)
     set_property(TARGET GamepadLegacy APPEND PROPERTY QT_ANDROID_BUNDLED_JAR_DEPENDENCIES
         jar/QtAndroidGamepad.jar
@@ -111,7 +132,7 @@ endif()
 
 #### Keys ignored in scope 12:.:.:gamepad.pro:<TRUE>:
 # ANDROID_FEATURES = "android.hardware.gamepad"
-qt_internal_add_docs(GamepadLegacy
-    doc/qtgamepad.qdocconf
-)
+# qt_internal_add_docs(GamepadLegacy
+#     doc/qtgamepad.qdocconf
+# )
 
